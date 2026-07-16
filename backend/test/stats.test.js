@@ -1,0 +1,120 @@
+process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-secret';
+process.env.DATABASE_URL = process.env.DATABASE_URL || 'postgresql://localhost:5432/unused';
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+
+const pool = require('../src/db/pool');
+const app = require('../src/app');
+const { generateToken } = require('../src/services/authService');
+const { buildStatsQuery } = require('../src/services/queryBuilder');
+
+const TEST_USER = { id: '11111111-1111-1111-1111-111111111111', email: 'test@example.com' };
+
+function listen() {
+  return new Promise((resolve) => {
+    const server = app.listen(0, () => resolve(server));
+  });
+}
+
+async function request(server, path, { token } = {}) {
+  const { port } = server.address();
+  const res = await fetch(`http://127.0.0.1:${port}${path}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  return { status: res.status, body: await res.json().catch(() => null) };
+}
+
+// --- queryBuilder unit tests ---
+
+test('buildStatsQuery groups by the dimension and orders by count desc', () => {
+  const { sql, params } = buildStatsQuery({ dimension: 'area_lit' });
+
+  assert.match(sql, /COALESCE\(area_lit, '\(blank\)'\) AS label/);
+  assert.match(sql, /GROUP BY 1/);
+  assert.match(sql, /ORDER BY count DESC, label ASC/);
+  assert.deepEqual(params, []);
+});
+
+test('buildStatsQuery reuses the shared WHERE clause for search and filters', () => {
+  const { sql, params } = buildStatsQuery({
+    dimension: 'pjt',
+    search: 'budi',
+    filters: [{ field: 'area_lit', operator: 'is', value: 'JAKARTA' }],
+  });
+
+  assert.match(sql, /kode_billing::text ILIKE \$1/);
+  assert.match(sql, /area_lit = \$2/);
+  assert.deepEqual(params, ['%budi%', 'JAKARTA']);
+});
+
+test('buildStatsQuery rejects dimensions outside the allow-list', () => {
+  for (const dimension of ['nama_pemilik', 'id; DROP TABLE users--', '', undefined]) {
+    assert.throws(
+      () => buildStatsQuery({ dimension }),
+      (err) => err.status === 400 && err.code === 'INVALID_DIMENSION'
+    );
+  }
+  // filter validation still applies
+  assert.throws(
+    () => buildStatsQuery({ dimension: 'tt', filters: [{ field: 'evil', operator: 'is', value: 'x' }] }),
+    (err) => err.code === 'INVALID_FILTER_FIELD'
+  );
+});
+
+// --- route tests (mocked pool) ---
+
+test('GET /stats returns { labels, counts } ordered by the query', async (t) => {
+  let captured;
+  const originalQuery = pool.query;
+  pool.query = async (sql, params) => {
+    captured = { sql, params };
+    return {
+      rows: [
+        { label: 'JAKARTA', count: 12 },
+        { label: 'BANDUNG', count: 5 },
+      ],
+    };
+  };
+  t.after(() => {
+    pool.query = originalQuery;
+  });
+
+  const server = await listen();
+  t.after(() => server.close());
+
+  const token = generateToken(TEST_USER);
+  const filters = encodeURIComponent(
+    JSON.stringify([{ field: 'sumber_slo', operator: 'is', value: 'ONLINE' }])
+  );
+  const { status, body } = await request(server, `/stats?dimension=area_lit&filters=${filters}`, {
+    token,
+  });
+
+  assert.equal(status, 200);
+  assert.deepEqual(body, { labels: ['JAKARTA', 'BANDUNG'], counts: [12, 5] });
+  assert.match(captured.sql, /sumber_slo = \$1/);
+  assert.deepEqual(captured.params, ['ONLINE']);
+});
+
+test('GET /stats rejects a bad dimension or bad filters JSON with 400', async (t) => {
+  const server = await listen();
+  t.after(() => server.close());
+  const token = generateToken(TEST_USER);
+
+  const badDimension = await request(server, '/stats?dimension=nama_pemilik', { token });
+  assert.equal(badDimension.status, 400);
+  assert.equal(badDimension.body.error.code, 'INVALID_DIMENSION');
+
+  const badJson = await request(server, '/stats?dimension=pjt&filters=not-json', { token });
+  assert.equal(badJson.status, 400);
+  assert.equal(badJson.body.error.code, 'INVALID_FILTERS');
+});
+
+test('GET /stats requires auth', async (t) => {
+  const server = await listen();
+  t.after(() => server.close());
+
+  const { status } = await request(server, '/stats?dimension=area_lit');
+  assert.equal(status, 401);
+});

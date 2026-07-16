@@ -1,0 +1,17 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: slo_archive_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: slo_user
+      POSTGRES_PASSWORD: slo_pass
+      POSTGRES_DB: slo_archive
+    ports:
+      # 5433 on the host: a native (Homebrew) Postgres owns 127.0.0.1:5432.
+      - "5433:5432"
+    volumes:
+      - slo_archive_data:/var/lib/postgresql/data
+ 
+volumes:
+  slo_archive_data:
