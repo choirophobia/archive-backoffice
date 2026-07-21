@@ -7,7 +7,7 @@ const assert = require('node:assert/strict');
 const pool = require('../src/db/pool');
 const app = require('../src/app');
 const { generateToken } = require('../src/services/authService');
-const { buildStatsQuery } = require('../src/services/queryBuilder');
+const { buildStatsQuery, buildTrendQuery } = require('../src/services/queryBuilder');
 
 const TEST_USER = { id: '11111111-1111-1111-1111-111111111111', email: 'test@example.com' };
 
@@ -60,6 +60,38 @@ test('buildStatsQuery rejects dimensions outside the allow-list', () => {
     () => buildStatsQuery({ dimension: 'tt', filters: [{ field: 'evil', operator: 'is', value: 'x' }] }),
     (err) => err.code === 'INVALID_FILTER_FIELD'
   );
+});
+
+test('buildTrendQuery buckets by month and excludes null dates', () => {
+  const { sql, params } = buildTrendQuery({ dateField: 'tanggal_permohonan' });
+
+  assert.match(sql, /date_trunc\('month', tanggal_permohonan\)/);
+  assert.match(sql, /WHERE tanggal_permohonan IS NOT NULL/);
+  assert.match(sql, /GROUP BY 1/);
+  assert.match(sql, /ORDER BY 1 ASC/);
+  assert.deepEqual(params, []);
+});
+
+test('buildTrendQuery reuses the shared WHERE clause for search and filters', () => {
+  const { sql, params } = buildTrendQuery({
+    dateField: 'tanggal_terbit',
+    search: 'budi',
+    filters: [{ field: 'area_lit', operator: 'is', value: 'JAKARTA' }],
+  });
+
+  assert.match(sql, /kode_billing::text ILIKE \$1/);
+  assert.match(sql, /area_lit = \$2/);
+  assert.match(sql, /AND tanggal_terbit IS NOT NULL/);
+  assert.deepEqual(params, ['%budi%', 'JAKARTA']);
+});
+
+test('buildTrendQuery rejects date fields outside the allow-list', () => {
+  for (const dateField of ['created_at', 'tgl_tagihan', 'id; DROP TABLE users--', '', undefined]) {
+    assert.throws(
+      () => buildTrendQuery({ dateField }),
+      (err) => err.status === 400 && err.code === 'INVALID_DATE_FIELD'
+    );
+  }
 });
 
 // --- route tests (mocked pool) ---
@@ -116,5 +148,52 @@ test('GET /stats requires auth', async (t) => {
   t.after(() => server.close());
 
   const { status } = await request(server, '/stats?dimension=area_lit');
+  assert.equal(status, 401);
+});
+
+test('GET /stats/trend returns { labels, counts } ordered chronologically', async (t) => {
+  let captured;
+  const originalQuery = pool.query;
+  pool.query = async (sql, params) => {
+    captured = { sql, params };
+    return {
+      rows: [
+        { label: '2025-01', count: 4 },
+        { label: '2025-02', count: 9 },
+      ],
+    };
+  };
+  t.after(() => {
+    pool.query = originalQuery;
+  });
+
+  const server = await listen();
+  t.after(() => server.close());
+
+  const token = generateToken(TEST_USER);
+  const { status, body } = await request(server, '/stats/trend?dateField=tanggal_permohonan', {
+    token,
+  });
+
+  assert.equal(status, 200);
+  assert.deepEqual(body, { labels: ['2025-01', '2025-02'], counts: [4, 9] });
+  assert.match(captured.sql, /date_trunc\('month', tanggal_permohonan\)/);
+});
+
+test('GET /stats/trend rejects a bad dateField with 400', async (t) => {
+  const server = await listen();
+  t.after(() => server.close());
+  const token = generateToken(TEST_USER);
+
+  const { status, body } = await request(server, '/stats/trend?dateField=created_at', { token });
+  assert.equal(status, 400);
+  assert.equal(body.error.code, 'INVALID_DATE_FIELD');
+});
+
+test('GET /stats/trend requires auth', async (t) => {
+  const server = await listen();
+  t.after(() => server.close());
+
+  const { status } = await request(server, '/stats/trend?dateField=tanggal_permohonan');
   assert.equal(status, 401);
 });

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import client from '../api/client';
 import BarChart from '../components/BarChart.jsx';
 import PieChart from '../components/PieChart.jsx';
+import TrendChart from '../components/TrendChart.jsx';
 import { useFilters } from '../filters.jsx';
 import { apiErrorMessage } from '../fields';
 
@@ -10,6 +11,11 @@ const DIMENSIONS = [
   { value: 'pjt', label: 'PJT' },
   { value: 'tt', label: 'TT' },
   { value: 'sumber_slo', label: 'SUMBER SLO' },
+];
+
+const DATE_FIELDS = [
+  { value: 'tanggal_permohonan', label: 'Tanggal Permohonan' },
+  { value: 'tanggal_terbit', label: 'Tanggal Terbit' },
 ];
 
 // Fixed categorical order (colorblind-safe as an ordered set — do not shuffle).
@@ -35,6 +41,12 @@ function Statistics() {
   const [counts, setCounts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+
+  const [dateField, setDateField] = useState('tanggal_permohonan');
+  const [trendLabels, setTrendLabels] = useState([]);
+  const [trendCounts, setTrendCounts] = useState([]);
+  const [trendLoading, setTrendLoading] = useState(true);
+  const [trendError, setTrendError] = useState('');
 
   const filtersParam = useMemo(
     () => (activeFilters.length > 0 ? JSON.stringify(activeFilters) : undefined),
@@ -73,7 +85,39 @@ function Statistics() {
     };
   }, [dimension, mode, filtersParam, searchParam]);
 
+  useEffect(() => {
+    let cancelled = false;
+    setTrendLoading(true);
+    client
+      .get('/stats/trend', {
+        params: {
+          dateField,
+          ...(mode === 'filtered' && filtersParam ? { filters: filtersParam } : {}),
+          ...(mode === 'filtered' && searchParam ? { search: searchParam } : {}),
+        },
+      })
+      .then(({ data }) => {
+        if (cancelled) return;
+        setTrendLabels(data.labels);
+        setTrendCounts(data.counts);
+        setTrendError('');
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setTrendLabels([]);
+        setTrendCounts([]);
+        setTrendError(apiErrorMessage(err, 'Failed to load trend.'));
+      })
+      .finally(() => {
+        if (!cancelled) setTrendLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [dateField, mode, filtersParam, searchParam]);
+
   const total = useMemo(() => counts.reduce((sum, n) => sum + n, 0), [counts]);
+  const trendTotal = useMemo(() => trendCounts.reduce((sum, n) => sum + n, 0), [trendCounts]);
 
   // Pie shows at most MAX_SLICES slices: top categories keep their fixed
   // palette slot, the tail folds into a gray "Other".
@@ -95,6 +139,7 @@ function Statistics() {
   }, [labels, counts, total]);
 
   const dimensionLabel = DIMENSIONS.find((d) => d.value === dimension).label;
+  const dateFieldLabel = DATE_FIELDS.find((d) => d.value === dateField).label;
   const filterSummary =
     activeFilters.length === 0 && !searchParam
       ? 'No search or filters are set on the Data page — showing all records.'
@@ -123,6 +168,17 @@ function Statistics() {
           </select>
         </label>
 
+        <label className="stats-dimension">
+          <span>Trend by</span>
+          <select value={dateField} onChange={(e) => setDateField(e.target.value)}>
+            {DATE_FIELDS.map((d) => (
+              <option key={d.value} value={d.value}>
+                {d.label}
+              </option>
+            ))}
+          </select>
+        </label>
+
         <div className="segmented" role="group" aria-label="Record scope">
           <button
             type="button"
@@ -142,6 +198,19 @@ function Statistics() {
 
         {mode === 'filtered' && <span className="stats-hint">{filterSummary}</span>}
       </div>
+
+      <section className={`panel trend-panel${trendLoading ? ' is-loading' : ''}`} aria-busy={trendLoading}>
+        <h2 className="panel-title">Records over time by {dateFieldLabel}</h2>
+        {trendError ? (
+          <p className="form-error">{trendError}</p>
+        ) : trendLoading && trendLabels.length === 0 ? (
+          <p className="stats-empty">Loading…</p>
+        ) : !trendLoading && trendTotal === 0 ? (
+          <p className="stats-empty">No dated records to summarize.</p>
+        ) : (
+          <TrendChart labels={trendLabels} counts={trendCounts} />
+        )}
+      </section>
 
       {error && <p className="form-error">{error}</p>}
 
