@@ -7,5 +7,6 @@ const router = express.Router();
 router.use(requireAuth);
 
 router.get('/', statsController.getStats);
+router.get('/trend', statsController.getTrend);
 
 module.exports = router;

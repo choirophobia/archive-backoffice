@@ -1,5 +1,5 @@
 const pool = require('../db/pool');
-const { buildStatsQuery, parseFilters, translateDbError } = require('../services/queryBuilder');
+const { buildStatsQuery, buildTrendQuery, parseFilters, translateDbError } = require('../services/queryBuilder');
 
 async function getStats(req, res, next) {
   try {
@@ -19,4 +19,22 @@ async function getStats(req, res, next) {
   }
 }
 
-module.exports = { getStats };
+async function getTrend(req, res, next) {
+  try {
+    const { sql, params } = buildTrendQuery({
+      dateField: req.query.dateField,
+      search: req.query.search,
+      filters: parseFilters(req.query.filters),
+    });
+
+    const { rows } = await pool.query(sql, params);
+    res.json({
+      labels: rows.map((row) => row.label),
+      counts: rows.map((row) => row.count),
+    });
+  } catch (err) {
+    next(translateDbError(err));
+  }
+}
+
+module.exports = { getStats, getTrend };

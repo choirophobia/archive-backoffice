@@ -1189,6 +1189,19 @@ select {
   color: var(--text-muted);
 }
 
+.trend-panel {
+  margin-bottom: 16px;
+}
+
+.trend-panel.is-loading {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.trend-box {
+  height: 260px;
+}
+
 .charts-grid {
   display: grid;
   grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);

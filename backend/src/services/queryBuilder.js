@@ -10,6 +10,10 @@ const OPERATORS = new Set(['is', 'contains', 'is_not']);
 // be interpolated into GROUP BY safely.
 const STATS_DIMENSIONS = new Set(['area_lit', 'pjt', 'tt', 'sumber_slo']);
 
+// Date fields exposed by GET /stats/trend — allow-listed so the field can be
+// interpolated into date_trunc() safely.
+const TREND_DATE_FIELDS = new Set(['tanggal_permohonan', 'tanggal_terbit']);
+
 // Generated/managed columns that a PUT payload may echo back (e.g. a row
 // fetched via GET) but must never update.
 const NON_UPDATABLE_COLUMNS = new Set(['id', 'batch_id', 'created_at', 'updated_at', 'search_index']);
@@ -185,6 +189,33 @@ function buildStatsQuery({ dimension, search, filters } = {}) {
 }
 
 /**
+ * Month-bucketed count query for GET /stats/trend: counts archive_files rows
+ * per calendar month of an allow-listed date field, reusing the same
+ * { search, filters } WHERE clause as GET /files. Rows with a null date are
+ * excluded (they have no month to bucket into). Ordered chronologically.
+ */
+function buildTrendQuery({ dateField, search, filters } = {}) {
+  if (!TREND_DATE_FIELDS.has(dateField)) {
+    throw httpError(
+      400,
+      `dateField must be one of: ${[...TREND_DATE_FIELDS].join(', ')}`,
+      'INVALID_DATE_FIELD'
+    );
+  }
+
+  const { whereSql, params } = buildWhere({ search, filters });
+  const notNull = `${dateField} IS NOT NULL`;
+  const fullWhereSql = whereSql ? `${whereSql} AND ${notNull}` : `WHERE ${notNull}`;
+
+  const sql = `SELECT to_char(date_trunc('month', ${dateField}), 'YYYY-MM') AS label, COUNT(*)::int AS count
+    FROM archive_files ${fullWhereSql}
+    GROUP BY 1
+    ORDER BY 1 ASC`;
+
+  return { sql, params };
+}
+
+/**
  * Partial-update statement for PUT /files/:id. Only allow-listed data
  * columns are set; managed columns in the payload are ignored, unknown keys
  * are rejected. Always bumps updated_at.
@@ -227,10 +258,12 @@ module.exports = {
   buildWhere,
   buildListQuery,
   buildStatsQuery,
+  buildTrendQuery,
   buildUpdateQuery,
   parseFilters,
   translateDbError,
   FILTERABLE_COLUMNS,
   SELECT_COLUMNS,
   STATS_DIMENSIONS,
+  TREND_DATE_FIELDS,
 };
