@@ -7,8 +7,9 @@ const FILTERABLE_COLUMNS = new Set([...ARCHIVE_COLUMNS, 'id', 'batch_id', 'creat
 const OPERATORS = new Set(['is', 'contains', 'is_not']);
 
 // Chart dimensions exposed by GET /stats — allow-listed so the dimension can
-// be interpolated into GROUP BY safely.
-const STATS_DIMENSIONS = new Set(['area_lit', 'pjt', 'tt', 'sumber_slo']);
+// be interpolated into GROUP BY safely. status_permohonan is included for the
+// Statistics page's KPI status-breakdown tile (not a dropdown chart option).
+const STATS_DIMENSIONS = new Set(['area_lit', 'pjt', 'tt', 'sumber_slo', 'status_permohonan']);
 
 // Date fields exposed by GET /stats/trend — allow-listed so the field can be
 // interpolated into date_trunc() safely.
@@ -189,6 +190,60 @@ function buildStatsQuery({ dimension, search, filters } = {}) {
 }
 
 /**
+ * Two-dimension grouped-count query for GET /stats/crosstab: counts
+ * archive_files rows per (dimension, secondaryDimension) pair, reusing the
+ * same { search, filters } WHERE clause as GET /files. Returns flat rows —
+ * folding the secondary dimension into a capped set of series (with an
+ * "Other" bucket) is display logic and lives on the frontend, same as the
+ * pie chart's slice folding.
+ */
+function buildCrosstabQuery({ dimension, secondaryDimension, search, filters } = {}) {
+  if (!STATS_DIMENSIONS.has(dimension)) {
+    throw httpError(
+      400,
+      `dimension must be one of: ${[...STATS_DIMENSIONS].join(', ')}`,
+      'INVALID_DIMENSION'
+    );
+  }
+  if (!STATS_DIMENSIONS.has(secondaryDimension)) {
+    throw httpError(
+      400,
+      `secondaryDimension must be one of: ${[...STATS_DIMENSIONS].join(', ')}`,
+      'INVALID_SECONDARY_DIMENSION'
+    );
+  }
+  if (dimension === secondaryDimension) {
+    throw httpError(400, 'secondaryDimension must differ from dimension', 'SAME_DIMENSION');
+  }
+
+  const { whereSql, params } = buildWhere({ search, filters });
+  const sql = `SELECT COALESCE(${dimension}, '(blank)') AS label,
+    COALESCE(${secondaryDimension}, '(blank)') AS group_label,
+    COUNT(*)::int AS count
+    FROM archive_files ${whereSql}
+    GROUP BY 1, 2
+    ORDER BY 1, 2`;
+
+  return { sql, params };
+}
+
+/**
+ * KPI summary query for GET /stats/summary: total row count plus the sum of
+ * the two money columns, reusing the same { search, filters } WHERE clause as
+ * GET /files. Sums are cast to float8 — precision loss is not a concern for
+ * these display-only aggregate totals.
+ */
+function buildSummaryQuery({ search, filters } = {}) {
+  const { whereSql, params } = buildWhere({ search, filters });
+  const sql = `SELECT COUNT(*)::int AS total,
+    COALESCE(SUM(biaya_daya), 0)::float8 AS sum_biaya_daya,
+    COALESCE(SUM(tarif_pnbp), 0)::float8 AS sum_tarif_pnbp
+    FROM archive_files ${whereSql}`;
+
+  return { sql, params };
+}
+
+/**
  * Month-bucketed count query for GET /stats/trend: counts archive_files rows
  * per calendar month of an allow-listed date field, reusing the same
  * { search, filters } WHERE clause as GET /files. Rows with a null date are
@@ -258,6 +313,8 @@ module.exports = {
   buildWhere,
   buildListQuery,
   buildStatsQuery,
+  buildCrosstabQuery,
+  buildSummaryQuery,
   buildTrendQuery,
   buildUpdateQuery,
   parseFilters,

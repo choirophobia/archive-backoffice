@@ -9,6 +9,7 @@ import {
   Tooltip,
   Filler,
 } from 'chart.js';
+import { formatMonthLabel } from '../fields';
 
 Chart.register(LineController, LineElement, PointElement, CategoryScale, LinearScale, Tooltip, Filler);
 
@@ -61,6 +62,7 @@ function TrendChart({ labels, counts }) {
           tooltip: {
             displayColors: false,
             callbacks: {
+              title: (items) => formatMonthLabel(items[0]?.label),
               label: (ctx) => `${ctx.parsed.y.toLocaleString()} records`,
             },
           },
