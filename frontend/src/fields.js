@@ -64,3 +64,25 @@ export function formatValue(field, value) {
 export function apiErrorMessage(err, fallback) {
   return err?.response?.data?.error?.message || err?.message || fallback;
 }
+
+// "2025-11" -> "November 2025". Built from local Y/M components (not
+// `new Date("2025-11-01")`) so a negative UTC offset can't roll the
+// formatted month back a day.
+export function formatMonthLabel(label) {
+  const [year, month] = String(label).split('-').map(Number);
+  if (!year || !month) return label;
+  return new Date(year, month - 1, 1).toLocaleDateString('en-US', {
+    month: 'long',
+    year: 'numeric',
+  });
+}
+
+// PLN/PNBP money columns are Indonesian Rupiah amounts.
+export function formatIDR(value) {
+  const n = Number(value) || 0;
+  return new Intl.NumberFormat('id-ID', {
+    style: 'currency',
+    currency: 'IDR',
+    maximumFractionDigits: 0,
+  }).format(n);
+}
