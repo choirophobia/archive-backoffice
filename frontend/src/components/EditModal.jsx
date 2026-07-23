@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import client from '../api/client';
 import Modal from './Modal.jsx';
+import PdfAttachment from './PdfAttachment.jsx';
 import { FIELDS, formatValue, apiErrorMessage } from '../fields';
 
 const INPUT_TYPES = { text: 'text', number: 'number', date: 'date', datetime: 'date' };
@@ -17,6 +18,7 @@ function toFormValues(row) {
 function EditModal({ id, onClose, onSaved, onDeleted }) {
   const [initial, setInitial] = useState(null);
   const [values, setValues] = useState(null);
+  const [pdfInfo, setPdfInfo] = useState(null);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -30,6 +32,11 @@ function EditModal({ id, onClose, onSaved, onDeleted }) {
         const formValues = toFormValues(data);
         setInitial(formValues);
         setValues(formValues);
+        setPdfInfo({
+          pdf_original_name: data.pdf_original_name,
+          pdf_size: data.pdf_size,
+          pdf_uploaded_at: data.pdf_uploaded_at,
+        });
       })
       .catch((err) => {
         if (!cancelled) setError(apiErrorMessage(err, 'Failed to load record.'));
@@ -115,20 +122,31 @@ function EditModal({ id, onClose, onSaved, onDeleted }) {
       {error && <p className="form-error">{error}</p>}
       {!error && !values && <p className="modal-loading">Loading…</p>}
       {values && (
-        <form id="edit-record-form" className="edit-grid" onSubmit={handleSave}>
-          {FIELDS.map((f) => (
-            <div className="field" key={f.key}>
-              <label htmlFor={`edit-${f.key}`}>{f.label}</label>
-              <input
-                id={`edit-${f.key}`}
-                type={INPUT_TYPES[f.type]}
-                step={f.type === 'number' ? 'any' : undefined}
-                value={values[f.key]}
-                onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value }))}
-              />
-            </div>
-          ))}
-        </form>
+        <>
+          <div className="pdf-section">
+            <h3 className="pdf-section-title">PDF Attachment</h3>
+            <PdfAttachment
+              id={id}
+              pdfInfo={pdfInfo}
+              canManage
+              onChanged={(updated) => setPdfInfo((p) => ({ ...p, ...updated }))}
+            />
+          </div>
+          <form id="edit-record-form" className="edit-grid" onSubmit={handleSave}>
+            {FIELDS.map((f) => (
+              <div className="field" key={f.key}>
+                <label htmlFor={`edit-${f.key}`}>{f.label}</label>
+                <input
+                  id={`edit-${f.key}`}
+                  type={INPUT_TYPES[f.type]}
+                  step={f.type === 'number' ? 'any' : undefined}
+                  value={values[f.key]}
+                  onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value }))}
+                />
+              </div>
+            ))}
+          </form>
+        </>
       )}
     </Modal>
   );

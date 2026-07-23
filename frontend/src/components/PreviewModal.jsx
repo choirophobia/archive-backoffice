@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import client from '../api/client';
 import Modal from './Modal.jsx';
+import PdfAttachment from './PdfAttachment.jsx';
 import { FIELDS, formatValue, apiErrorMessage } from '../fields';
 
 // Read-only view of a single record — fetches the full row by id.
@@ -28,14 +29,20 @@ function PreviewModal({ id, onClose }) {
       {error && <p className="form-error">{error}</p>}
       {!error && !row && <p className="modal-loading">Loading…</p>}
       {row && (
-        <dl className="preview-grid">
-          {FIELDS.map((f) => (
-            <div className="preview-item" key={f.key}>
-              <dt>{f.label}</dt>
-              <dd>{formatValue(f, row[f.key]) || '—'}</dd>
-            </div>
-          ))}
-        </dl>
+        <>
+          <div className="pdf-section">
+            <h3 className="pdf-section-title">PDF Attachment</h3>
+            <PdfAttachment id={id} pdfInfo={row} canManage={false} />
+          </div>
+          <dl className="preview-grid">
+            {FIELDS.map((f) => (
+              <div className="preview-item" key={f.key}>
+                <dt>{f.label}</dt>
+                <dd>{formatValue(f, row[f.key]) || '—'}</dd>
+              </div>
+            ))}
+          </dl>
+        </>
       )}
     </Modal>
   );
