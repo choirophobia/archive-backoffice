@@ -1,0 +1,4 @@
+ALTER TABLE archive_files
+  ADD COLUMN IF NOT EXISTS pdf_original_name TEXT,
+  ADD COLUMN IF NOT EXISTS pdf_size INT,
+  ADD COLUMN IF NOT EXISTS pdf_uploaded_at TIMESTAMPTZ;

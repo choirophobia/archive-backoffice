@@ -1,6 +1,9 @@
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-secret';
 process.env.DATABASE_URL = process.env.DATABASE_URL || 'postgresql://localhost:5432/unused';
+process.env.PDF_STORAGE_DIR =
+  process.env.PDF_STORAGE_DIR || require('node:fs').mkdtempSync(require('node:path').join(require('node:os').tmpdir(), 'slo-pdf-'));
 
+const fs = require('node:fs');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
@@ -8,6 +11,7 @@ const pool = require('../src/db/pool');
 const app = require('../src/app');
 const { generateToken } = require('../src/services/authService');
 const { buildWhere, buildListQuery, buildUpdateQuery } = require('../src/services/queryBuilder');
+const { pdfPath } = require('../src/services/pdfStorage');
 
 const TEST_USER = {
   id: '11111111-1111-1111-1111-111111111111',
@@ -36,6 +40,18 @@ async function request(server, path, { method = 'GET', token, body } = {}) {
       ...(body ? { 'Content-Type': 'application/json' } : {}),
     },
     body: body ? JSON.stringify(body) : undefined,
+  });
+  return { status: res.status, body: await res.json().catch(() => null) };
+}
+
+async function uploadPdfFile(server, path, buffer, { token, filename = 'doc.pdf' } = {}) {
+  const { port } = server.address();
+  const form = new FormData();
+  form.append('file', new Blob([buffer], { type: 'application/pdf' }), filename);
+  const res = await fetch(`http://127.0.0.1:${port}${path}`, {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: form,
   });
   return { status: res.status, body: await res.json().catch(() => null) };
 }
@@ -284,4 +300,112 @@ test('GET /files/:id is readable by a karyawan (preview allowed, edit is not)', 
   const { status, body } = await request(server, `/files/${ROW_ID}`, { token });
   assert.equal(status, 200);
   assert.equal(body.id, ROW_ID);
+});
+
+// --- PDF attachment routes ---
+
+test('POST /files/:id/pdf stores the file and records metadata; rejects non-pdf and karyawan', async (t) => {
+  let captured;
+  const originalQuery = pool.query;
+  pool.query = async (sql, params) => {
+    captured = { sql, params };
+    return { rows: [{ id: ROW_ID, pdf_original_name: 'doc.pdf', pdf_size: 4, pdf_uploaded_at: '2026-01-01T00:00:00.000Z' }] };
+  };
+  t.after(() => {
+    pool.query = originalQuery;
+    fs.rmSync(pdfPath(ROW_ID), { force: true });
+  });
+
+  const server = await listen();
+  t.after(() => server.close());
+  const token = generateToken(TEST_USER);
+
+  const { status, body } = await uploadPdfFile(server, `/files/${ROW_ID}/pdf`, Buffer.from('%PDF-1.4'), { token });
+  assert.equal(status, 200);
+  assert.equal(body.pdf_original_name, 'doc.pdf');
+  assert.match(captured.sql, /SET pdf_original_name = \$1, pdf_size = \$2, pdf_uploaded_at = now\(\)/);
+  assert.deepEqual(captured.params, ['doc.pdf', 8, ROW_ID]);
+  assert.ok(fs.existsSync(pdfPath(ROW_ID)));
+
+  const badType = await uploadPdfFile(server, `/files/${ROW_ID}/pdf`, Buffer.from('not a pdf'), {
+    token,
+    filename: 'doc.txt',
+  });
+  assert.equal(badType.status, 400);
+  assert.equal(badType.body.error.code, 'INVALID_FILE_TYPE');
+
+  const karyawanToken = generateToken(KARYAWAN_USER);
+  const forbidden = await uploadPdfFile(server, `/files/${ROW_ID}/pdf`, Buffer.from('%PDF-1.4'), {
+    token: karyawanToken,
+  });
+  assert.equal(forbidden.status, 403);
+  assert.equal(forbidden.body.error.code, 'FORBIDDEN');
+});
+
+test('POST /files/:id/pdf returns 404 for a missing row and does not write a file', async (t) => {
+  const originalQuery = pool.query;
+  pool.query = async () => ({ rows: [] });
+  t.after(() => {
+    pool.query = originalQuery;
+  });
+
+  const server = await listen();
+  t.after(() => server.close());
+  const token = generateToken(TEST_USER);
+  const missingId = '33333333-3333-3333-3333-333333333333';
+
+  const { status } = await uploadPdfFile(server, `/files/${missingId}/pdf`, Buffer.from('%PDF-1.4'), { token });
+  assert.equal(status, 404);
+  assert.equal(fs.existsSync(pdfPath(missingId)), false);
+});
+
+test('GET /files/:id/pdf streams the stored file for any role, 404 when none is attached', async (t) => {
+  fs.writeFileSync(pdfPath(ROW_ID), 'hello pdf');
+  const originalQuery = pool.query;
+  pool.query = async (sql, params) =>
+    params[0] === ROW_ID ? { rows: [{ pdf_original_name: 'doc.pdf' }] } : { rows: [{ pdf_original_name: null }] };
+  t.after(() => {
+    pool.query = originalQuery;
+    fs.rmSync(pdfPath(ROW_ID), { force: true });
+  });
+
+  const server = await listen();
+  t.after(() => server.close());
+  const { port } = server.address();
+  const karyawanToken = generateToken(KARYAWAN_USER);
+
+  const res = await fetch(`http://127.0.0.1:${port}/files/${ROW_ID}/pdf`, {
+    headers: { Authorization: `Bearer ${karyawanToken}` },
+  });
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('content-type'), 'application/pdf');
+  assert.equal(await res.text(), 'hello pdf');
+
+  const other = '55555555-5555-5555-5555-555555555555';
+  const none = await fetch(`http://127.0.0.1:${port}/files/${other}/pdf`, {
+    headers: { Authorization: `Bearer ${karyawanToken}` },
+  });
+  assert.equal(none.status, 404);
+});
+
+test('DELETE /files/:id/pdf removes the file and clears metadata; 403 for karyawan', async (t) => {
+  fs.writeFileSync(pdfPath(ROW_ID), 'hello pdf');
+  const originalQuery = pool.query;
+  pool.query = async () => ({ rows: [{ id: ROW_ID }] });
+  t.after(() => {
+    pool.query = originalQuery;
+    fs.rmSync(pdfPath(ROW_ID), { force: true });
+  });
+
+  const server = await listen();
+  t.after(() => server.close());
+  const karyawanToken = generateToken(KARYAWAN_USER);
+  const forbidden = await request(server, `/files/${ROW_ID}/pdf`, { method: 'DELETE', token: karyawanToken });
+  assert.equal(forbidden.status, 403);
+
+  const token = generateToken(TEST_USER);
+  const ok = await request(server, `/files/${ROW_ID}/pdf`, { method: 'DELETE', token });
+  assert.equal(ok.status, 200);
+  assert.deepEqual(ok.body, { success: true });
+  assert.equal(fs.existsSync(pdfPath(ROW_ID)), false);
 });

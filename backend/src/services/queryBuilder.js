@@ -15,11 +15,22 @@ const STATS_DIMENSIONS = new Set(['area_lit', 'pjt', 'tt', 'sumber_slo', 'status
 // interpolated into date_trunc() safely.
 const TREND_DATE_FIELDS = new Set(['tanggal_permohonan', 'tanggal_terbit']);
 
+// PDF attachment metadata — managed exclusively by the /files/:id/pdf
+// endpoints, never through the generic PUT patch.
+const PDF_COLUMNS = ['pdf_original_name', 'pdf_size', 'pdf_uploaded_at'];
+
 // Generated/managed columns that a PUT payload may echo back (e.g. a row
 // fetched via GET) but must never update.
-const NON_UPDATABLE_COLUMNS = new Set(['id', 'batch_id', 'created_at', 'updated_at', 'search_index']);
+const NON_UPDATABLE_COLUMNS = new Set([
+  'id',
+  'batch_id',
+  'created_at',
+  'updated_at',
+  'search_index',
+  ...PDF_COLUMNS,
+]);
 
-const SELECT_COLUMNS = ['id', 'batch_id', ...ARCHIVE_COLUMNS, 'created_at', 'updated_at'].join(', ');
+const SELECT_COLUMNS = ['id', 'batch_id', ...ARCHIVE_COLUMNS, ...PDF_COLUMNS, 'created_at', 'updated_at'].join(', ');
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 200;

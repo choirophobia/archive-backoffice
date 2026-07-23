@@ -1093,6 +1093,78 @@ select {
   color: var(--text-muted);
 }
 
+/* PDF attachment (Preview & Edit modals) */
+
+.pdf-section {
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.pdf-section-title {
+  margin: 0 0 10px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.pdf-attachment {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.pdf-attachment-info {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.pdf-attachment-name {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--accent);
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  overflow-wrap: break-word;
+  text-align: left;
+}
+
+.pdf-attachment-name:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.pdf-attachment-meta {
+  font-size: 12.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.pdf-attachment-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.pdf-attachment-actions .button-secondary,
+.pdf-attachment-actions .button-danger {
+  padding: 7px 12px;
+  font-size: 13px;
+}
+
+.pdf-attachment-input {
+  display: none;
+}
+
 /* Preview grid */
 
 .preview-grid {
